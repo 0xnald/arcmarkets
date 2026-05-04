@@ -9,19 +9,28 @@ import {
   Wallet,
   Trophy,
   Activity,
-  SlidersHorizontal,
   HelpCircle,
+  Droplet,
+  Shield,
 } from "lucide-react";
+import { useAdmin } from "@/hooks/useAdmin";
 
 const NAV = [
   { href: "/", icon: LayoutGrid, label: "Markets" },
   { href: "/portfolio", icon: Wallet, label: "Portfolio" },
   { href: "/leaderboard", icon: Trophy, label: "Leaderboard" },
   { href: "/activity", icon: Activity, label: "Activity" },
+  { href: "/faucet", icon: Droplet, label: "Faucet" },
 ];
 
 export function Rail() {
   const pathname = usePathname();
+  const { isAuthorized } = useAdmin();
+
+  // Admin entry is conditionally added at the end of the nav, only for owner/curators
+  const navItems = isAuthorized
+    ? [...NAV, { href: "/admin", icon: Shield, label: "Admin" }]
+    : NAV;
 
   return (
     <aside
@@ -57,7 +66,7 @@ export function Rail() {
 
       {/* Nav icons */}
       <nav className="flex flex-col gap-1 flex-1">
-        {NAV.map((item) => {
+        {navItems.map((item) => {
           const active =
             item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           const Icon = item.icon;

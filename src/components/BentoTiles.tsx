@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   TrendingUp,
@@ -13,6 +14,7 @@ import {
 import type { Market, Trade } from "@/lib/types";
 import { fmtUSD, fmtCents, fmtPct, timeUntil, timeSince, CATEGORY_META } from "@/lib/format";
 import { Sparkline } from "./Sparkline";
+import { HowItWorksModal } from "./HowItWorksModal";
 
 // ===== Market tile (variants by size) =====
 
@@ -312,48 +314,65 @@ export function LeaderboardTile() {
 // ===== Brand hero tile =====
 
 export function BrandHeroTile() {
+  const [howOpen, setHowOpen] = useState(false);
+
+  const handleExplore = () => {
+    if (typeof window === "undefined") return;
+    // Scroll to first market tile below — since the markets grid is the first .bento
+    // after the hero, scroll the page down by ~one viewport, smoothly.
+    window.scrollTo({ top: window.innerHeight * 0.85, behavior: "smooth" });
+  };
+
   return (
-    <div className="tile relative overflow-hidden flex flex-col justify-between p-6 min-h-[300px] tile-featured">
-      <div
-        className="absolute -top-20 -right-20 w-72 h-72 rounded-full pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(circle, rgba(139, 92, 246, 0.3) 0%, transparent 70%)",
-          filter: "blur(20px)",
-        }}
-      />
-      <div
-        className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full pointer-events-none"
-        style={{
-          background:
-            "radial-gradient(circle, rgba(34, 211, 238, 0.2) 0%, transparent 70%)",
-          filter: "blur(20px)",
-        }}
-      />
+    <>
+      <div className="tile relative overflow-hidden flex flex-col justify-between p-6 min-h-[300px] tile-featured">
+        <div
+          className="absolute -top-20 -right-20 w-72 h-72 rounded-full pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(139, 92, 246, 0.3) 0%, transparent 70%)",
+            filter: "blur(20px)",
+          }}
+        />
+        <div
+          className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(circle, rgba(34, 211, 238, 0.2) 0%, transparent 70%)",
+            filter: "blur(20px)",
+          }}
+        />
 
-      <div className="relative">
-        <div className="flex items-center gap-2 mb-4">
-          <span className="pulse-dot" style={{ width: 6, height: 6 }} />
-          <span className="label-overline" style={{ color: "#22D3EE" }}>
-            Live · Arc Testnet
-          </span>
+        <div className="relative">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="pulse-dot" style={{ width: 6, height: 6 }} />
+            <span className="label-overline" style={{ color: "#22D3EE" }}>
+              Live · Arc Testnet
+            </span>
+          </div>
+          <h1 className="font-display text-3xl xl:text-4xl font-bold leading-[1.05] tracking-tight">
+            Trade the <span className="text-gradient">future</span>.<br />
+            Win in seconds.
+          </h1>
         </div>
-        <h1 className="font-display text-3xl xl:text-4xl font-bold leading-[1.05] tracking-tight">
-          Trade the <span className="text-gradient">future</span>.<br />
-          Win in seconds.
-        </h1>
+
+        <div className="relative">
+          <p className="text-[13px] ink-2 leading-relaxed mb-4 max-w-md">
+            On-chain prediction markets denominated in USDC, settled with sub-second finality on Arc.
+          </p>
+          <div className="flex items-center gap-2">
+            <button onClick={handleExplore} className="btn btn-primary">
+              Explore markets
+            </button>
+            <button onClick={() => setHowOpen(true)} className="btn">
+              How it works
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="relative">
-        <p className="text-[13px] ink-2 leading-relaxed mb-4 max-w-md">
-          On-chain prediction markets denominated in USDC, settled with sub-second finality on Arc.
-        </p>
-        <div className="flex items-center gap-2">
-          <button className="btn btn-primary">Explore markets</button>
-          <button className="btn">How it works</button>
-        </div>
-      </div>
-    </div>
+      <HowItWorksModal open={howOpen} onClose={() => setHowOpen(false)} />
+    </>
   );
 }
 

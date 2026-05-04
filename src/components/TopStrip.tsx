@@ -5,6 +5,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import { ThemeToggle } from "./ThemeToggle";
 import { arcTestnet } from "@/lib/chain";
+import { useMarkets } from "@/hooks/useMarkets";
 
 interface Props {
   onSearch?: (q: string) => void;
@@ -16,6 +17,9 @@ export function TopStrip({ onSearch, searchValue }: Props) {
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
   const wrongNetwork = isConnected && chainId !== arcTestnet.id;
+
+  // Read the count from on-chain so the pill stays accurate even after createMarket
+  const { count, isLoading } = useMarkets();
 
   return (
     <div
@@ -47,6 +51,26 @@ export function TopStrip({ onSearch, searchValue }: Props) {
         </span>
       </div>
 
+      {/* Live markets count pill — only render once we have data */}
+      {!isLoading && count > 0 && (
+        <div
+          className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono whitespace-nowrap"
+          style={{
+            background: "rgba(34, 211, 238, 0.08)",
+            color: "rgb(var(--ink-2))",
+            border: "1px solid rgba(34, 211, 238, 0.25)",
+          }}
+        >
+          <span className="pulse-dot" style={{ width: 6, height: 6 }} />
+          <span>
+            <span className="font-semibold" style={{ color: "rgb(var(--ink))" }}>
+              {count}
+            </span>
+            <span className="ink-3"> {count === 1 ? "market" : "markets"} live</span>
+          </span>
+        </div>
+      )}
+
       <div className="flex-1" />
 
       {/* Wrong network warning */}
@@ -67,7 +91,6 @@ export function TopStrip({ onSearch, searchValue }: Props) {
 
       <ThemeToggle />
 
-      {/* Real RainbowKit connect button */}
       <ConnectButton
         chainStatus="none"
         accountStatus={{ smallScreen: "avatar", largeScreen: "full" }}

@@ -171,7 +171,7 @@ export default function Home() {
             </section>
 
             <div className="mt-12 mb-4 text-center text-[11px] font-mono ink-3">
-              Powered by Arc · Settles in &lt;500ms · USDC-native · {markets.length} markets live
+              Powered by Arc · Settles in &lt;500ms · USDC-native
             </div>
           </>
         )}

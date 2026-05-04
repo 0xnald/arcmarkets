@@ -73,6 +73,16 @@ export const FACTORY_ABI = [
     stateMutability: "nonpayable",
   },
   {
+    type: "function",
+    name: "resolveMarket",
+    inputs: [
+      { name: "marketAddr", type: "address" },
+      { name: "result", type: "uint8" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
     type: "event",
     name: "MarketCreated",
     inputs: [
