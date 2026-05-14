@@ -1,63 +1,110 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
-import { formatUnits, parseAbiItem, type Log } from "viem";
-import { MARKET_ABI, USDC_DECIMALS } from "@/lib/contracts";
+import { formatUnits, parseAbiItem } from "viem";
+import { USDC_DECIMALS } from "@/lib/contracts";
+import { gqlQuery, HAS_INDEXER } from "@/lib/graphql";
 import type { Market, Trade } from "@/lib/types";
 
-// The Trade event ABI item — extracted for getLogs filtering
 const TRADE_EVENT = parseAbiItem(
   "event Trade(address indexed user, uint8 side, bool isBuy, uint256 usdcAmount, uint256 sharesAmount, uint256 newYesPrice)"
 );
 
-/**
- * useActivity — fetches recent Trade events from a set of markets via on-chain log scanning.
- *
- * This is a pragmatic mid-step between mock data and a proper indexer:
- *   - Calls eth_getLogs for each market contract
- *   - Looks back ~5000 blocks (roughly the last 1-2 hours on Arc, depending on block time)
- *   - Aggregates, sorts by recency, returns the top N
- *
- * Limitations:
- *   - RPC may rate-limit getLogs calls; if so, we degrade gracefully to empty
- *   - Only shows trades from the lookback window — older history requires an indexer
- *   - Does not show buys vs sells differently in the activity feed (just direction)
- *
- * For production: replace this with a Goldsky/Graph subgraph that exposes a /trades endpoint.
- */
-
 const LOOKBACK_BLOCKS = 5000n;
 
 interface Options {
-  marketAddress?: string; // if provided, only fetch from this one market
+  marketAddress?: string;
   limit?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  GraphQL query
+// ─────────────────────────────────────────────────────────────────────
+
+const ACTIVITY_QUERY = `
+  query GetActivity($limit: Int!, $where: Trade_filter) {
+    trades(first: $limit, orderBy: timestamp, orderDirection: desc, where: $where) {
+      id
+      side
+      isBuy
+      usdcAmount
+      sharesAmount
+      price
+      timestamp
+      txHash
+      market { id question }
+      user { id }
+    }
+  }
+`;
+
+interface RawTrade {
+  id: string;
+  side: "YES" | "NO";
+  isBuy: boolean;
+  usdcAmount: string;
+  sharesAmount: string;
+  price: string;
+  timestamp: string;
+  txHash: string;
+  market: { id: string; question: string };
+  user: { id: string };
+}
+
+function shortAddr(addr: string): string {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
 export function useActivity(markets: Market[], opts: Options = {}) {
   const { marketAddress, limit = 20 } = opts;
+
+  // ── Path A: indexer ────────────────────────────────────────────────
+  const indexer = useQuery({
+    queryKey: ["activity", marketAddress || "all", limit],
+    queryFn: async () => {
+      const where = marketAddress
+        ? { market: marketAddress.toLowerCase() }
+        : undefined;
+      const data = await gqlQuery<{ trades: RawTrade[] }>(ACTIVITY_QUERY, {
+        limit,
+        where,
+      });
+      return data.trades.map<Trade>((t) => ({
+        id: t.id,
+        marketId: t.market.id,
+        marketQuestion: t.market.question,
+        side: t.side === "YES" ? "yes" : "no",
+        shares: Number(formatUnits(BigInt(t.sharesAmount), USDC_DECIMALS)),
+        price: parseFloat(t.price),
+        total: Number(formatUnits(BigInt(t.usdcAmount), USDC_DECIMALS)),
+        user: shortAddr(t.user.id),
+        timestamp: parseInt(t.timestamp) * 1000,
+      }));
+    },
+    enabled: HAS_INDEXER,
+    refetchInterval: 10_000,
+  });
+
+  // ── Path B: RPC fallback (getLogs) ─────────────────────────────────
   const publicClient = usePublicClient();
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [rpcTrades, setRpcTrades] = useState<Trade[]>([]);
+  const [rpcLoading, setRpcLoading] = useState(false);
+  const [rpcError, setRpcError] = useState<string | null>(null);
 
-  const fetchTrades = useCallback(async () => {
-    if (!publicClient || markets.length === 0) return;
+  const fetchRpcTrades = useCallback(async () => {
+    if (HAS_INDEXER || !publicClient || markets.length === 0) return;
 
-    setIsLoading(true);
-    setError(null);
-
+    setRpcLoading(true);
+    setRpcError(null);
     try {
-      // Determine block range
-      const latestBlock = await publicClient.getBlockNumber();
-      const fromBlock = latestBlock > LOOKBACK_BLOCKS ? latestBlock - LOOKBACK_BLOCKS : 0n;
-
-      // Determine which markets to scan
+      const latest = await publicClient.getBlockNumber();
+      const fromBlock = latest > LOOKBACK_BLOCKS ? latest - LOOKBACK_BLOCKS : 0n;
       const targets = marketAddress
         ? markets.filter((m) => m.id.toLowerCase() === marketAddress.toLowerCase())
         : markets;
 
-      // Fetch logs for each market in parallel
       const logsPerMarket = await Promise.all(
         targets.map((market) =>
           publicClient
@@ -65,83 +112,73 @@ export function useActivity(markets: Market[], opts: Options = {}) {
               address: market.id as `0x${string}`,
               event: TRADE_EVENT,
               fromBlock,
-              toBlock: latestBlock,
+              toBlock: latest,
             })
             .then((logs) => ({ market, logs }))
-            .catch((err) => {
-              console.warn(`[useActivity] getLogs failed for ${market.id}:`, err.message);
-              return { market, logs: [] as Log[] };
-            })
+            .catch(() => ({ market, logs: [] as any[] }))
         )
       );
 
-      // Need block timestamps to convert blocks to wall-clock time.
-      // We batch this — get a list of unique blocks and fetch their timestamps once.
       const allLogs: { market: Market; log: any }[] = [];
       for (const { market, logs } of logsPerMarket) {
-        for (const log of logs) {
-          allLogs.push({ market, log });
-        }
+        for (const log of logs) allLogs.push({ market, log });
       }
 
-      // Get timestamps for blocks (with dedup)
-      const uniqueBlocks = Array.from(new Set(allLogs.map((entry) => entry.log.blockNumber)));
-      const blockTimestamps = new Map<bigint, number>();
-
+      const uniqueBlocks = Array.from(new Set(allLogs.map((e) => e.log.blockNumber)));
+      const blockTimes = new Map<bigint, number>();
       await Promise.all(
         uniqueBlocks.map(async (bn) => {
           try {
-            const block = await publicClient.getBlock({ blockNumber: bn });
-            blockTimestamps.set(bn, Number(block.timestamp) * 1000);
+            const b = await publicClient.getBlock({ blockNumber: bn });
+            blockTimes.set(bn, Number(b.timestamp) * 1000);
           } catch {
-            blockTimestamps.set(bn, Date.now());
+            blockTimes.set(bn, Date.now());
           }
         })
       );
 
-      // Transform into our Trade type
-      const result: Trade[] = allLogs.map((entry, idx) => {
+      const result: Trade[] = allLogs.map((entry) => {
         const args = entry.log.args as {
           user: `0x${string}`;
           side: number;
           isBuy: boolean;
           usdcAmount: bigint;
           sharesAmount: bigint;
-          newYesPrice: bigint;
         };
-
         const isYes = Number(args.side) === 0;
         const total = Number(formatUnits(args.usdcAmount, USDC_DECIMALS));
         const sharesNum = Number(formatUnits(args.sharesAmount, USDC_DECIMALS));
-        const price = sharesNum > 0 ? total / sharesNum : 0;
-
         return {
           id: `${entry.log.transactionHash}-${entry.log.logIndex}`,
           marketId: entry.market.id,
           marketQuestion: entry.market.question,
           side: isYes ? "yes" : "no",
           shares: sharesNum,
-          price,
+          price: sharesNum > 0 ? total / sharesNum : 0,
           total,
-          user: `${args.user.slice(0, 6)}…${args.user.slice(-4)}`,
-          timestamp: blockTimestamps.get(entry.log.blockNumber) ?? Date.now(),
+          user: shortAddr(args.user),
+          timestamp: blockTimes.get(entry.log.blockNumber) ?? Date.now(),
         };
       });
 
-      // Sort newest first, slice to limit
       result.sort((a, b) => b.timestamp - a.timestamp);
-      setTrades(result.slice(0, limit));
+      setRpcTrades(result.slice(0, limit));
     } catch (e: any) {
-      console.error("[useActivity] error:", e);
-      setError(e?.message || "Failed to fetch activity");
+      setRpcError(e?.message || "Failed");
     } finally {
-      setIsLoading(false);
+      setRpcLoading(false);
     }
   }, [publicClient, markets, marketAddress, limit]);
 
   useEffect(() => {
-    fetchTrades();
-  }, [fetchTrades]);
+    if (!HAS_INDEXER) fetchRpcTrades();
+  }, [fetchRpcTrades]);
 
-  return { trades, isLoading, error, refetch: fetchTrades };
+  return {
+    trades: HAS_INDEXER ? indexer.data ?? [] : rpcTrades,
+    isLoading: HAS_INDEXER ? indexer.isLoading : rpcLoading,
+    error: HAS_INDEXER ? (indexer.error?.message ?? null) : rpcError,
+    refetch: HAS_INDEXER ? indexer.refetch : fetchRpcTrades,
+    source: HAS_INDEXER ? ("indexer" as const) : ("rpc" as const),
+  };
 }
