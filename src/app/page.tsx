@@ -16,6 +16,8 @@ import {
 } from "@/components/BentoTiles";
 import { useMarkets, useMarketById } from "@/hooks/useMarkets";
 import { useActivity } from "@/hooks/useActivity";
+import { useProtocolStats } from "@/hooks/useProtocolStats";
+import { useTopTraders } from "@/hooks/useTopTraders";
 import { fmtUSD } from "@/lib/format";
 import type { Market } from "@/lib/types";
 
@@ -24,16 +26,37 @@ export default function Home() {
   const [category, setCategory] = useState("all");
   const [openMarketId, setOpenMarketId] = useState<string | null>(null);
 
-  const { markets, isLoading, error, count, refetch } = useMarkets();
+  const { markets, isLoading, error, refetch } = useMarkets();
+  // We need openMarketId to be lookup-able across ALL markets (including resolved)
+  // so we can still open the drawer for a resolved market via search/activity
   const openMarket = useMarketById(openMarketId, markets);
 
-  // Activity feed — scans Trade events from chain
+  // Activity feed
   const { trades, isLoading: activityLoading, refetch: refetchActivity } = useActivity(markets, {
     limit: 12,
   });
 
+  // Real protocol-wide stats (indexer) — falls back gracefully if not available
+  const { stats: protocolStats } = useProtocolStats();
+
+  // Top 3 traders for the leaderboard tile
+  const { traders: topTraders, isLoading: tradersLoading, isAvailable: tradersAvailable } =
+    useTopTraders(3);
+
+  // ─── Live markets = anything NOT fully resolved ────────────────────
+  // Per your spec: hide fully resolved markets (status RESOLVED_YES/NO/INVALID)
+  // Keep ended-awaiting-resolution visible (they're still "live" until admin resolves)
+  const liveMarkets = useMemo(
+    () => markets.filter((m) => !m.resolution),
+    [markets]
+  );
+
+  // Live count for stats — only count live markets, not resolved ones
+  const liveCount = liveMarkets.length;
+
+  // Apply category + search filters to the LIVE markets only
   const filtered = useMemo(() => {
-    let m: Market[] = markets;
+    let m: Market[] = liveMarkets;
     if (category === "trending") m = m.filter((x) => x.trending);
     else if (category !== "all") m = m.filter((x) => x.category === category);
     if (search) {
@@ -41,13 +64,19 @@ export default function Home() {
       m = m.filter((x) => x.question.toLowerCase().includes(q));
     }
     return m;
-  }, [markets, category, search]);
+  }, [liveMarkets, category, search]);
 
-  const featured = markets.find((m) => m.featured) || markets[0];
+  // Featured tile: pick from LIVE markets only
+  const featured = liveMarkets.find((m) => m.featured) || liveMarkets[0];
   const others = featured ? filtered.filter((m) => m.id !== featured.id) : filtered;
 
-  const totalLiquidity = markets.reduce((sum, m) => sum + m.liquidity, 0);
-  const totalVolume = markets.reduce((sum, m) => sum + m.volume, 0);
+  // ─── Stats computations ────────────────────────────────────────────
+  const totalLiquidity = liveMarkets.reduce((sum, m) => sum + m.liquidity, 0);
+
+  // Total volume: prefer indexer-backed all-time volume, fallback to summing market.volume
+  const totalVolume = protocolStats.isAvailable
+    ? protocolStats.totalVolume
+    : markets.reduce((sum, m) => sum + m.volume, 0);
 
   // Refresh both markets and activity after a trade lands
   const handleTradeSuccess = () => {
@@ -68,7 +97,12 @@ export default function Home() {
 
         {!isLoading && !error && markets.length === 0 && <EmptyState />}
 
-        {markets.length > 0 && featured && (
+        {markets.length > 0 && !featured && (
+          // All markets are resolved — show a different empty state
+          <AllResolvedState resolvedCount={markets.length} />
+        )}
+
+        {liveMarkets.length > 0 && featured && (
           <>
             <section className="bento mb-3">
               <div className="col-span-4 lg:col-span-4 sm:col-span-2">
@@ -93,24 +127,24 @@ export default function Home() {
                 <StatTile
                   label="Total Liquidity"
                   value={fmtUSD(totalLiquidity)}
-                  sub="Across all markets"
+                  sub="Across live markets"
                   icon={<DollarSign size={11} className="ink-3" />}
                   accent="#22D3EE"
                 />
               </div>
               <div className="col-span-2 lg:col-span-2 sm:col-span-1">
                 <StatTile
-                  label="Open Markets"
-                  value={String(count)}
-                  sub={`${markets.filter((m) => m.trending).length} trending`}
+                  label="Live Markets"
+                  value={String(liveCount)}
+                  sub={`${liveMarkets.filter((m) => m.trending).length} trending`}
                   icon={<Layers size={11} className="ink-3" />}
                 />
               </div>
               <div className="col-span-2 lg:col-span-2 sm:col-span-1">
                 <StatTile
-                  label="Outstanding Vol"
+                  label="Total Volume"
                   value={fmtUSD(totalVolume)}
-                  sub="In active shares"
+                  sub={protocolStats.isAvailable ? "All-time traded" : "Approx (indexer needed)"}
                   icon={<Users size={11} className="ink-3" />}
                 />
               </div>
@@ -124,7 +158,11 @@ export default function Home() {
                 />
               </div>
               <div className="col-span-4 lg:col-span-4 sm:col-span-2">
-                <LeaderboardTile />
+                <LeaderboardTile
+                  traders={topTraders}
+                  isLoading={tradersLoading}
+                  isAvailable={tradersAvailable}
+                />
               </div>
             </section>
 
@@ -232,6 +270,18 @@ function EmptyState() {
       >
         forge script script/SeedMarkets.s.sol --broadcast
       </code>
+    </div>
+  );
+}
+
+function AllResolvedState({ resolvedCount }: { resolvedCount: number }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center max-w-lg mx-auto">
+      <div className="font-display text-2xl mb-2">No live markets right now</div>
+      <div className="text-[13px] ink-2 mb-4 max-w-md">
+        All {resolvedCount} markets have resolved. New markets coming soon — or create one via the
+        admin panel.
+      </div>
     </div>
   );
 }

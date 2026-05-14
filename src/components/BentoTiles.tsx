@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   TrendingUp,
@@ -15,6 +16,7 @@ import type { Market, Trade } from "@/lib/types";
 import { fmtUSD, fmtCents, fmtPct, timeUntil, timeSince, CATEGORY_META } from "@/lib/format";
 import { Sparkline } from "./Sparkline";
 import { HowItWorksModal } from "./HowItWorksModal";
+import type { TopTrader } from "@/hooks/useTopTraders";
 
 // ===== Market tile (variants by size) =====
 
@@ -259,12 +261,29 @@ export function LiveActivityTile({ trades, isLoading, onTradeClick }: LiveActivi
   );
 }
 
-// ===== Leaderboard tile (coming soon) =====
+// ===== Leaderboard tile (real data when indexer connected) =====
 
-export function LeaderboardTile() {
+interface LeaderboardTileProps {
+  traders: TopTrader[];
+  isLoading?: boolean;
+  isAvailable?: boolean;
+}
+
+const RANK_COLORS = ["#FBBF24", "#9CA3AF", "#CD7F32"];
+
+function shortAddr(a: string): string {
+  if (!a) return "";
+  return `${a.slice(0, 6)}…${a.slice(-4)}`;
+}
+
+export function LeaderboardTile({ traders, isLoading, isAvailable }: LeaderboardTileProps) {
+  // When indexer isn't connected, show the original "coming soon" state.
+  // When indexer IS connected but no traders yet, show a different empty state.
+  // When traders exist, show the actual top 3.
+  const showRankings = isAvailable && traders.length > 0;
+
   return (
     <div className="tile flex flex-col min-h-[300px] relative overflow-hidden">
-      {/* Decorative gradient orb */}
       <div
         className="absolute -top-12 -right-12 w-48 h-48 rounded-full opacity-20 pointer-events-none"
         style={{
@@ -278,35 +297,124 @@ export function LeaderboardTile() {
       >
         <Trophy size={13} className="ink-2" />
         <span className="label-overline">Top traders</span>
-        <span
-          className="ml-auto text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded"
-          style={{
-            background: "rgba(168, 85, 247, 0.12)",
-            color: "#A855F7",
-            border: "1px solid rgba(168, 85, 247, 0.3)",
-          }}
-        >
-          Soon
-        </span>
+        {showRankings && (
+          <Link
+            href="/leaderboard"
+            className="ml-auto text-[10px] font-mono ink-3 hover:text-ink transition-colors"
+          >
+            View all →
+          </Link>
+        )}
+        {!showRankings && !isAvailable && (
+          <span
+            className="ml-auto text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={{
+              background: "rgba(168, 85, 247, 0.12)",
+              color: "#A855F7",
+              border: "1px solid rgba(168, 85, 247, 0.3)",
+            }}
+          >
+            Soon
+          </span>
+        )}
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-6 relative">
-        <div
-          className="w-12 h-12 rounded-full mb-3 flex items-center justify-center"
-          style={{
-            background:
-              "linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(34, 211, 238, 0.15))",
-          }}
-        >
-          <Sparkles size={18} className="ink-2" />
+      {showRankings ? (
+        <div className="flex-1 flex flex-col">
+          {traders.slice(0, 3).map((t, i) => (
+            <motion.div
+              key={t.address}
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.06 }}
+              className="flex items-center gap-3 px-4 py-3 border-b"
+              style={{ borderColor: "rgb(var(--line))" }}
+            >
+              <div
+                className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 font-mono text-[11px] font-bold"
+                style={{
+                  background: RANK_COLORS[i] + "18",
+                  color: RANK_COLORS[i],
+                  border: `1px solid ${RANK_COLORS[i]}40`,
+                }}
+              >
+                {i === 0 ? <Trophy size={12} /> : `#${t.rank}`}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-[12px] font-semibold truncate">
+                  {shortAddr(t.address)}
+                </div>
+                <div className="text-[10.5px] font-mono ink-3 mt-0.5">
+                  {t.tradeCount} {t.tradeCount === 1 ? "trade" : "trades"}
+                </div>
+              </div>
+              <div
+                className="font-mono text-[12.5px] font-bold flex-shrink-0"
+                style={{ color: t.realizedPnL >= 0 ? "#10B981" : "#EF4444" }}
+              >
+                {t.realizedPnL >= 0 ? "+" : ""}
+                {fmtUSD(t.realizedPnL)}
+              </div>
+            </motion.div>
+          ))}
+
+          {/* Pad with empty slots if fewer than 3 */}
+          {Array.from({ length: Math.max(0, 3 - traders.length) }).map((_, i) => (
+            <div
+              key={`empty-${i}`}
+              className="flex items-center gap-3 px-4 py-3 border-b opacity-40"
+              style={{ borderColor: "rgb(var(--line))" }}
+            >
+              <div
+                className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 font-mono text-[11px] font-bold"
+                style={{
+                  background: "rgb(var(--surface-2))",
+                  color: "rgb(var(--ink-3))",
+                  border: "1px solid rgb(var(--line))",
+                }}
+              >
+                #{traders.length + i + 1}
+              </div>
+              <div className="flex-1 text-[11.5px] ink-3 font-mono">—</div>
+            </div>
+          ))}
         </div>
-        <div className="font-display text-base font-semibold mb-1">
-          Leaderboard <span className="text-gradient">coming soon</span>
+      ) : isAvailable ? (
+        // Indexer connected but no traders yet
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-6 relative">
+          <div
+            className="w-12 h-12 rounded-full mb-3 flex items-center justify-center"
+            style={{ background: "rgb(var(--surface-2))", border: "1px solid rgb(var(--line))" }}
+          >
+            <Trophy size={16} className="ink-3" />
+          </div>
+          <div className="font-display text-base font-semibold mb-1">No traders yet</div>
+          <div className="text-[11.5px] ink-3 leading-relaxed max-w-[240px]">
+            {isLoading
+              ? "Loading rankings..."
+              : "Be the first. Make a few trades and you'll appear here."}
+          </div>
         </div>
-        <div className="text-[11.5px] ink-3 leading-relaxed max-w-[240px]">
-          Once enough trades flow through, top traders will be ranked here by realized PnL.
+      ) : (
+        // Indexer not connected — coming soon
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-6 relative">
+          <div
+            className="w-12 h-12 rounded-full mb-3 flex items-center justify-center"
+            style={{
+              background:
+                "linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(34, 211, 238, 0.15))",
+            }}
+          >
+            <Sparkles size={18} className="ink-2" />
+          </div>
+          <div className="font-display text-base font-semibold mb-1">
+            Leaderboard <span className="text-gradient">coming soon</span>
+          </div>
+          <div className="text-[11.5px] ink-3 leading-relaxed max-w-[240px]">
+            Once enough trades flow through, top traders will be ranked here by realized PnL.
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -318,8 +426,6 @@ export function BrandHeroTile() {
 
   const handleExplore = () => {
     if (typeof window === "undefined") return;
-    // Scroll to first market tile below — since the markets grid is the first .bento
-    // after the hero, scroll the page down by ~one viewport, smoothly.
     window.scrollTo({ top: window.innerHeight * 0.85, behavior: "smooth" });
   };
 

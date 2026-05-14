@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { formatUnits, parseAbiItem } from "viem";
@@ -13,15 +13,12 @@ const TRADE_EVENT = parseAbiItem(
 );
 
 const LOOKBACK_BLOCKS = 5000n;
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
 interface Options {
   marketAddress?: string;
   limit?: number;
 }
-
-// ─────────────────────────────────────────────────────────────────────
-//  GraphQL query
-// ─────────────────────────────────────────────────────────────────────
 
 const ACTIVITY_QUERY = `
   query GetActivity($limit: Int!, $where: Trade_filter) {
@@ -87,7 +84,7 @@ export function useActivity(markets: Market[], opts: Options = {}) {
     refetchInterval: 10_000,
   });
 
-  // ── Path B: RPC fallback (getLogs) ─────────────────────────────────
+  // ── Path B: RPC fallback ───────────────────────────────────────────
   const publicClient = usePublicClient();
   const [rpcTrades, setRpcTrades] = useState<Trade[]>([]);
   const [rpcLoading, setRpcLoading] = useState(false);
@@ -95,7 +92,6 @@ export function useActivity(markets: Market[], opts: Options = {}) {
 
   const fetchRpcTrades = useCallback(async () => {
     if (HAS_INDEXER || !publicClient || markets.length === 0) return;
-
     setRpcLoading(true);
     setRpcError(null);
     try {
@@ -160,7 +156,6 @@ export function useActivity(markets: Market[], opts: Options = {}) {
           timestamp: blockTimes.get(entry.log.blockNumber) ?? Date.now(),
         };
       });
-
       result.sort((a, b) => b.timestamp - a.timestamp);
       setRpcTrades(result.slice(0, limit));
     } catch (e: any) {
@@ -174,8 +169,28 @@ export function useActivity(markets: Market[], opts: Options = {}) {
     if (!HAS_INDEXER) fetchRpcTrades();
   }, [fetchRpcTrades]);
 
+  const trades = HAS_INDEXER ? indexer.data ?? [] : rpcTrades;
+
+  // 24h volume & count — computed from the trade feed.
+  // Caveat: if `limit` is small and you have heavy volume, this can undercount.
+  // For limit=100 and typical testnet volume this is accurate.
+  const { volume24h, tradesCount24h } = useMemo(() => {
+    const cutoff = Date.now() - TWENTY_FOUR_HOURS_MS;
+    let vol = 0;
+    let count = 0;
+    for (const t of trades) {
+      if (t.timestamp >= cutoff) {
+        vol += t.total;
+        count += 1;
+      }
+    }
+    return { volume24h: vol, tradesCount24h: count };
+  }, [trades]);
+
   return {
-    trades: HAS_INDEXER ? indexer.data ?? [] : rpcTrades,
+    trades,
+    volume24h,
+    tradesCount24h,
     isLoading: HAS_INDEXER ? indexer.isLoading : rpcLoading,
     error: HAS_INDEXER ? (indexer.error?.message ?? null) : rpcError,
     refetch: HAS_INDEXER ? indexer.refetch : fetchRpcTrades,

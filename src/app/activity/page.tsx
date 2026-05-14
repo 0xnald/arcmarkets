@@ -24,15 +24,27 @@ const ARC_EXPLORER = "https://testnet.arcscan.app";
 export default function ActivityPage() {
   const [openMarketId, setOpenMarketId] = useState<string | null>(null);
   const { markets, refetch: refetchMarkets } = useMarkets();
-  const { trades, isLoading, error, refetch } = useActivity(markets, { limit: 100 });
+
+  // Pull last 100 trades so we can show recent activity AND have enough
+  // history to compute 24h volume accurately.
+  const {
+    trades,
+    volume24h,
+    tradesCount24h,
+    isLoading,
+    error,
+    refetch,
+  } = useActivity(markets, { limit: 100 });
+
   const openMarket = useMarketById(openMarketId, markets);
 
-  // Stats from the trade feed
-  const totalVolume = trades.reduce((sum, t) => sum + t.total, 0);
-  const yesCount = trades.filter((t) => t.side === "yes").length;
-  const noCount = trades.length - yesCount;
-  const yesPct = trades.length > 0 ? Math.round((yesCount / trades.length) * 100) : 0;
-  const noPct = trades.length > 0 ? Math.round((noCount / trades.length) * 100) : 0;
+  // YES/NO split, 24h window
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const recentTrades = trades.filter((t) => t.timestamp >= cutoff);
+  const yesCount = recentTrades.filter((t) => t.side === "yes").length;
+  const noCount = recentTrades.length - yesCount;
+  const yesPct = recentTrades.length > 0 ? Math.round((yesCount / recentTrades.length) * 100) : 0;
+  const noPct = recentTrades.length > 0 ? Math.round((noCount / recentTrades.length) * 100) : 0;
 
   const handleTradeSuccess = () => {
     refetchMarkets();
@@ -52,11 +64,11 @@ export default function ActivityPage() {
           <div>
             <h1 className="font-display text-3xl font-bold tracking-tight">Activity</h1>
             <p className="ink-2 text-[13px] mt-1">
-              Recent Trade events scanned directly from Arc Testnet contracts.
+              Recent trades across every Arc Markets contract. Last 100 shown.
             </p>
           </div>
           <button
-            onClick={refetch}
+            onClick={() => refetch()}
             disabled={isLoading}
             className="btn btn-sm"
             title="Refresh"
@@ -70,29 +82,29 @@ export default function ActivityPage() {
           </button>
         </motion.div>
 
-        {/* Stats */}
+        {/* Stats — now showing 24h metrics */}
         <section className="bento mb-3">
           <div className="col-span-3 lg:col-span-3 sm:col-span-1">
             <StatTile
-              label="Recent Trades"
-              value={String(trades.length)}
-              sub="Last ~5000 blocks"
+              label="24h Trades"
+              value={String(tradesCount24h)}
+              sub="In the last day"
               icon={<ActivityIcon size={11} className="ink-3" />}
             />
           </div>
           <div className="col-span-3 lg:col-span-3 sm:col-span-1">
             <StatTile
-              label="Volume"
-              value={fmtUSD(totalVolume, { compact: false, decimals: 0 })}
-              sub="Across all trades"
+              label="24h Volume"
+              value={fmtUSD(volume24h, { compact: false, decimals: 0 })}
+              sub="USDC traded in 24h"
               icon={<ArrowUpRight size={11} className="ink-3" />}
               accent="#22D3EE"
             />
           </div>
           <div className="col-span-3 lg:col-span-3 sm:col-span-1">
             <StatTile
-              label="YES vs NO"
-              value={trades.length > 0 ? `${yesPct}% / ${noPct}%` : "—"}
+              label="YES vs NO (24h)"
+              value={recentTrades.length > 0 ? `${yesPct}% / ${noPct}%` : "—"}
               sub={`${yesCount} yes · ${noCount} no`}
               icon={<ArrowDownRight size={11} className="ink-3" />}
             />
@@ -117,9 +129,9 @@ export default function ActivityPage() {
                 style={{ borderColor: "rgb(var(--line))" }}
               >
                 <span className="pulse-dot" />
-                <span className="label-overline">Live trades</span>
+                <span className="label-overline">Recent trades</span>
                 <span className="ml-auto text-[11px] font-mono ink-3">
-                  {isLoading ? "Scanning..." : `${trades.length} found`}
+                  {isLoading ? "Loading..." : `${trades.length} found`}
                 </span>
               </div>
 
@@ -131,7 +143,7 @@ export default function ActivityPage() {
               ) : isLoading && trades.length === 0 ? (
                 <div className="p-16 text-center">
                   <Loader2 size={20} className="ink-3 animate-spin mx-auto mb-3" />
-                  <div className="text-[12px] ink-3 font-mono">Scanning chain for trades...</div>
+                  <div className="text-[12px] ink-3 font-mono">Loading trades...</div>
                 </div>
               ) : trades.length === 0 ? (
                 <div className="p-16 text-center">
@@ -143,7 +155,7 @@ export default function ActivityPage() {
               ) : (
                 trades.map((t, i) => {
                   const isYes = t.side === "yes";
-                  const txHash = t.id.split("-")[0]; // tx hash from id format
+                  const txHash = t.id.split("-")[0];
                   return (
                     <motion.div
                       key={t.id}
@@ -219,7 +231,7 @@ export default function ActivityPage() {
         </section>
 
         <div className="text-center mt-6 mb-4 text-[11px] font-mono ink-3 leading-relaxed">
-          Activity scans the last ~5000 blocks of Trade events. For deeper history, an indexer is needed.
+          Volume stats reflect the last 24 hours. Showing the most recent 100 trades overall.
         </div>
       </main>
 
